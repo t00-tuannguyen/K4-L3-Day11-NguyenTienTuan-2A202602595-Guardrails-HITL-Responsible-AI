@@ -1,5 +1,29 @@
 # Day 11 — Controlled Agent Security (2026)
 
+## Bài nộp
+
+| | |
+|---|---|
+| **Họ tên** | Nguyen Tien Tuan |
+| **MSSV** | 2A202602595 |
+| **Red provider / model** | `openai` / `gpt-4o-mini` |
+| **Bonus chọn** | B1 — leak **Red** |
+
+**Chạy lại (từ gốc repo, sau khi điền `.env`):**
+
+```bash
+source .venv/bin/activate
+python src/main.py --part 3   # Blue → outputs/results.json, audit_log.json, metrics.json
+python src/main.py --part 4   # Red + Red Advance → outputs/*attack*.json
+python scripts/grade.py --submission-dir . --out outputs/grade_report.json
+```
+
+**Ghi chú:** OpenRouter không còn endpoint cho `liquid/lfm-2.5-2.6b` (trả 404
+"No endpoints found"), chỉ còn `liquid/lfm-2.5-2.6b:free` — cùng model. Vì vậy
+`BLUE_MODEL` trong `src/core/config.py` được đổi sang biến thể `:free`.
+
+---
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** xây **Blue** (phòng thủ), rồi red-team **Red** + **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).

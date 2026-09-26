@@ -11,12 +11,14 @@ Status convention (không dùng True/False mơ hồ):
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 
 from google.genai import types
 from google.adk.plugins import base_plugin
 from google.adk.agents.invocation_context import InvocationContext
 
+from agents.security_boundary import normalize_for_security
 from core.config import ALLOWED_TOPICS, BLOCKED_TOPICS
 
 # Quyết định rõ ràng — tránh đảo nghĩa True/False
@@ -52,13 +54,24 @@ def detect_injection(user_input: str) -> InputStatus:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
     INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
+        r"ignore\s+(all\s+)?(the\s+|your\s+)?(previous\s+|above\s+|prior\s+|earlier\s+)?(instructions?|rules?|prompts?)",
+        r"(disregard|forget|override)\s+(all\s+)?(your\s+|the\s+)?(previous\s+|prior\s+)?(instructions?|rules?|guidelines?|system\s+prompt)",
+        r"\byou\s+are\s+now\b",
+        r"\bsystem\s+prompt\b",
+        r"reveal\s+(your\s+|the\s+)?(instructions?|prompt|system|config|internal)",
+        r"pretend\s+(you\s+are|to\s+be)",
+        r"act\s+as\s+(a\s+|an\s+)?(unrestricted|unfiltered|jailbroken|evil)",
+        r"\bDAN\b|\bjailbreak",
+        r"developer\s+mode",
+        r"bỏ\s+qua\s+(mọi\s+|tất\s+cả\s+)?(hướng\s+dẫn|chỉ\s+dẫn|quy\s+tắc)",
+        r"tiết\s+lộ\s+(mật\s+khẩu|api|system\s*prompt|thông\s+tin\s+nội\s+bộ)",
+        r"bạn\s+(bây\s+giờ\s+)?là\s+DAN",
     ]
 
+    # Canonicalize first so zero-width / full-width tricks cannot split keywords.
+    text = normalize_for_security(user_input)
     for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+        if re.search(pattern, text, re.IGNORECASE):
             return "BLOCK"
     return "ALLOW"
 
@@ -74,6 +87,13 @@ def detect_injection(user_input: str) -> InputStatus:
 # Return ``"ALLOW"`` if banking-related and OK.
 # ============================================================
 
+def _strip_accents(text: str) -> str:
+    """"tài khoản" -> "tai khoan" so Vietnamese with diacritics matches config topics."""
+    text = text.replace("đ", "d")
+    decomposed = unicodedata.normalize("NFD", text)
+    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+
+
 def topic_filter(user_input: str) -> InputStatus:
     """Decide whether the input is on-topic for VinBank.
 
@@ -84,14 +104,18 @@ def topic_filter(user_input: str) -> InputStatus:
         ``"BLOCK"`` = chặn (off-topic hoặc topic cấm).
         ``"ALLOW"`` = cho qua (câu banking hợp lệ).
     """
-    input_lower = user_input.lower()
+    input_lower = _strip_accents(normalize_for_security(user_input).lower())
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return "BLOCK"
-    # 2. If input doesn't contain any allowed topic -> return "BLOCK"
-    # 3. Otherwise -> return "ALLOW"
+    def _has(term: str) -> bool:
+        # Word-prefix match: "hack" hits "hacking" but "kill" does not hit "skill",
+        # "atm" does not hit "treatment".
+        return re.search(rf"\b{re.escape(term)}", input_lower) is not None
 
-    pass  # Replace with your implementation
+    if any(_has(t) for t in BLOCKED_TOPICS):
+        return "BLOCK"
+    if not any(_has(t) for t in ALLOWED_TOPICS):
+        return "BLOCK"
+    return "ALLOW"
 
 
 # ============================================================
@@ -104,6 +128,16 @@ def topic_filter(user_input: str) -> InputStatus:
 #   - user_message is types.Content (not str)
 #   - Return types.Content to block, or None to pass through
 # ============================================================
+
+INJECTION_BLOCK_MESSAGE = (
+    "[input_guardrail] Request blocked: possible prompt injection detected. "
+    "I can only help with VinBank banking questions."
+)
+TOPIC_BLOCK_MESSAGE = (
+    "[input_guardrail] Request blocked: off-topic. I can only help with banking "
+    "topics such as accounts, transfers, savings, loans and credit cards."
+)
+
 
 class InputGuardrailPlugin(base_plugin.BasePlugin):
     """Plugin that blocks bad input before it reaches the LLM."""
@@ -144,14 +178,13 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         self.total_count += 1
         text = self._extract_text(user_message)
 
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 3. If both return "ALLOW": return None (let message through)
-
-        pass  # Replace with your implementation
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(INJECTION_BLOCK_MESSAGE)
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(TOPIC_BLOCK_MESSAGE)
+        return None
 
 
 # ============================================================
